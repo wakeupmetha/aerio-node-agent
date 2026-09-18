@@ -48,3 +48,18 @@ test('start(): first tick after firstDelayMs, keeps going after a failed run; 0 
   assert.equal(off.enabled, false);
   assert.equal(off.nextRunAt, null);
 });
+
+test('timeoutMs: a hung run fails, releases the loop, and the next run goes through', async () => {
+  let calls = 0;
+  const errors = [];
+  const s = new Scheduler({
+    name: 't', intervalMs: 0, timeoutMs: 30,
+    run: async () => { calls++; if (calls === 1) return new Promise(() => {}); return 'ok'; },
+    onError: (e) => errors.push(e.message),
+  });
+  await assert.rejects(s.runOnce(), /timed out/);
+  assert.deepEqual(errors, ['run timed out after 0s']);
+  assert.equal(s.running, false);
+  assert.equal(s.inflight, null);
+  assert.equal(await s.runOnce(), 'ok');
+});

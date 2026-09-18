@@ -38,6 +38,12 @@ const bind = env('BIND', '127.0.0.1');
 const intervalMs = num('INTERVAL_MS', 30 * 60 * 1000);
 const jitterPct = num('JITTER_PCT', 0.15);
 const firstDelayMs = num('FIRST_DELAY_MS', 5_000);
+// A run is ~15 s with the defaults below; anything past this is a hang, not a
+// slow link (scheduler.js watchdog).
+const runTimeoutMs = num('RUN_TIMEOUT_MS', 120_000);
+// Runs the heartbeat carries, so a panel restart redraws the chart at once
+// instead of refilling one point per run. 48 = 24 h at the default cadence.
+const HEARTBEAT_HISTORY = 48;
 
 // Economical defaults (5 s phases, 4 streams): a node pays for egress and the
 // panel is not a lab. Per-request sizes are upstream's.
@@ -97,6 +103,7 @@ const speedtest = new Scheduler({
   minIntervalMs: 60_000,
   jitterPct,
   firstDelayMs,
+  timeoutMs: runTimeoutMs,
   run: ({ n }) => {
     stLog.info(`run #${n} started`);
     return runSpeedtest(speedtestOpts);
@@ -198,6 +205,12 @@ if (panelUrl) {
       lastRunAt: store.last()?.startedAt ?? null,
       lastRunError,
       last: store.last(),
+      history: store.query({ limit: HEARTBEAT_HISTORY }).map((r) => ({
+        at: r.startedAt,
+        downMbps: r.download?.mbps ?? null,
+        upMbps: r.upload?.mbps ?? null,
+        latencyMs: r.latency?.median ?? null,
+      })),
       geocheck: geocheckDigest,
     }),
     onCommand: (cmd) => {

@@ -22,6 +22,10 @@ const MIN_RAMP_UP_MS = 1000;
 const UPLOAD_CHUNK_SIZE = 64 * 1024;
 const MIN_DOWNLOAD_BYTES_PER_REQ = 100_000;
 const WORKER_ERROR_BACKOFF_MS = 100;
+// How long the phase waits for its workers after the abort. A request that
+// ignores the abort (an upload with a streaming body can) is abandoned rather
+// than awaited — the sampler already has every byte it moved.
+const WORKER_DRAIN_MS = 5_000;
 
 export function measureDownload({ concurrency = 4, durationMs = 5000, bytesPerRequest = 10_000_000, measId } = {}) {
   return runStreams({
@@ -47,7 +51,7 @@ export function measureUpload({ concurrency = 4, durationMs = 5000, bytesPerRequ
  * `durationMs`, sampling the aggregate rate. Exported for tests, which pass a
  * synthetic streamFn.
  */
-export async function runStreams({ concurrency, durationMs, streamFn, sampleIntervalMs = SAMPLE_INTERVAL_MS, bytesPerReq = 0 }) {
+export async function runStreams({ concurrency, durationMs, streamFn, sampleIntervalMs = SAMPLE_INTERVAL_MS, bytesPerReq = 0, drainMs = WORKER_DRAIN_MS }) {
   const ctrl = new AbortController();
   const counter = { bytes: 0 };
   const state = { errors: 0, bytesPerReq };
@@ -74,7 +78,7 @@ export async function runStreams({ concurrency, durationMs, streamFn, sampleInte
   await sleep(durationMs);
   ctrl.abort();
   clearInterval(sampler);
-  await Promise.allSettled(workers);
+  await Promise.race([Promise.allSettled(workers), sleep(drainMs)]);
 
   const cutoffMs = Math.max(MIN_RAMP_UP_MS, durationMs * RAMP_UP_FRACTION);
   const steady = samples.filter((s) => s.tMs >= cutoffMs).map((s) => s.mbps);

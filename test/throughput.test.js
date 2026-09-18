@@ -42,3 +42,13 @@ test('runStreams: a failed worker backs off instead of hot-looping', async () =>
   assert.equal(r.errors, calls);
   assert.equal(r.mbps, 0);
 });
+
+test('runStreams: a worker that ignores the abort is abandoned after drainMs', async () => {
+  const t0 = performance.now();
+  const r = await runStreams({
+    concurrency: 1, durationMs: 50, sampleIntervalMs: 10, drainMs: 20,
+    streamFn: ({ counter }) => { counter.bytes += 1000; return new Promise(() => {}); },
+  });
+  assert.ok(performance.now() - t0 < 500, 'the phase must not wait for the hung worker');
+  assert.equal(r.totalBytes, 1000);
+});

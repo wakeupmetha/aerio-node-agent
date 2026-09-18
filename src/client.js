@@ -33,7 +33,11 @@ export function uploadUrl(measId) {
   return u.toString();
 }
 
-export async function fetchTrace(signal) {
+// Both reads are best-effort metadata ahead of the run, and a stalled
+// connection must not stall the run with them.
+const META_TIMEOUT_MS = 10_000;
+
+export async function fetchTrace(signal = AbortSignal.timeout(META_TIMEOUT_MS)) {
   const res = await fetch(`${BASE}/cdn-cgi/trace`, { signal, cache: 'no-store', headers: headers() });
   if (!res.ok) throw new Error(`trace ${res.status}`);
   const text = await res.text();
@@ -45,7 +49,7 @@ export async function fetchTrace(signal) {
   return out;
 }
 
-export async function fetchMeta(signal) {
+export async function fetchMeta(signal = AbortSignal.timeout(META_TIMEOUT_MS)) {
   const res = await fetch(`${BASE}/meta`, { signal, cache: 'no-store', headers: headers() });
   if (!res.ok) throw new Error(`meta ${res.status}`);
   return res.json();

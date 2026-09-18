@@ -60,7 +60,7 @@ TOKEN=devtok node src/index.js                      # standalone: no push, local
 TOKEN=devtok PANEL_URL=http://localhost:3030 INTERVAL_MS=120000 node src/index.js   # against a local panel
 ```
 
-The panel side for the last line: `npm run dev` + `npm run dev:api` in `aerio-crm`, then generate a token on `http://localhost:3030/nodes` for a Remnawave node and use it as `TOKEN`. Within 30 s the card shows `agent v0.2.0 · seen just now`.
+The panel side for the last line: `npm run dev` + `npm run dev:api` in `aerio-crm`, then generate a token on `http://localhost:3030/nodes` for a Remnawave node and use it as `TOKEN`. Within 30 s the card shows `agent v0.2.1 · seen just now`.
 
 `geocheck` is not on a dev machine's PATH unless you put it there (`go install github.com/remnawave/geocheck/cmd/geocheck@latest`); without it the agent logs one WARN and runs speedtests only.
 
@@ -118,11 +118,14 @@ Headers: `Authorization: Bearer <TOKEN>`, `Content-Type: application/json`, `Use
 
 ```jsonc
 {
-  "agent": { "version": "0.2.0", "startedAt": "…", "heartbeatMs": 30000, "intervalMs": 1800000, "geocheckIntervalMs": 21600000, "geocheck": true },
+  "agent": { "version": "0.2.1", "startedAt": "…", "heartbeatMs": 30000, "intervalMs": 1800000, "geocheckIntervalMs": 21600000, "geocheck": true },
   "node": { "ip": "203.0.113.10", "country": "Germany", "countryCode": "DE", "region": "Hesse", "city": "Frankfurt", "isp": "Hetzner" },
   "running": false, "nextRunAt": "…", "lastRunAt": "…",
   "lastRunError": null,                 // reason of the newest FAILED run; null after a success
   "last": { …speedtest row, §4 below… } | null,
+  // ≥ 0.2.1: the newest 48 runs, oldest first — a panel restart redraws its
+  // chart from the first heartbeat instead of one point per run (~4 KB/beat)
+  "history": [{ "at": "…", "downMbps": 2399, "upMbps": 1937, "latencyMs": 34 }],
   "geocheck": { …digest, §4 below… } | null
 }
 ```
@@ -189,6 +192,8 @@ Bearer is compared with `crypto.timingSafeEqual`. One access-log line per reques
 
 One class, two instances. `setTimeout`-based: the follow-up is scheduled only after the current run resolves, so runs never overlap. `intervalMs ± jitterPct`. `runOnce()` returns the in-flight promise when one exists — a tick, an on-demand HTTP call and a panel command that coincide share one run. `onDone` / `onError` are hooks; their own exceptions are logged and never break the loop. `intervalMs = 0` disables `start()` (used by `GEOCHECK_INTERVAL_MS=0`); `runOnce()` still works.
 
+**`timeoutMs` is a watchdog (0.2.1, 2026-09-18).** A run that has not settled by then fails with `run timed out after Ns` (→ `onError`, `lastRunError`, heartbeat) and the loop moves on. Without it one hung run is the end of the loop: `tick()` awaits it before scheduling the next, and `runOnce()` hands every later caller — the panel's «Run now» included — the same never-settling promise. **That is what happened on both production nodes on 0.2.0**: `running: true` and a `nextRunAt` five and six days in the past, while the heartbeats looked healthy. The hang point was not captured (no node access); every candidate is now bounded — `/cdn-cgi/trace` and `/meta` get a 10 s signal (they had none), a throughput phase waits for its workers at most 5 s after the abort (an upload with a streaming body can ignore it), and the watchdog backs all of it. The abandoned run is forgotten, not cancelled. Speedtest uses `RUN_TIMEOUT_MS` (120 s — a run is ~15 s); geocheck keeps its own 180 s `execFile` timeout.
+
 | Instance | Cadence | Floor | First run | On done | On error |
 |---|---|---|---|---|---|
 | `speedtest` | `INTERVAL_MS` (30 min) | 60 s | `FIRST_DELAY_MS` (5 s) | append to history, INFO line + result box, heartbeat | `lastRunError`, WARN + failed box, heartbeat |
@@ -214,6 +219,7 @@ A speedtest and a geocheck may overlap: geocheck is ~40 small HTTPS requests and
 | `PANEL_URL` | `""` | panel origin; must start with `http(s)://`; empty ⇒ standalone (WARN at boot, no push) |
 | `HEARTBEAT_MS` | `30000` | floor 5 s |
 | `INTERVAL_MS` · `JITTER_PCT` · `FIRST_DELAY_MS` | `1800000` · `0.15` · `5000` | speedtest cadence (floor 60 s) |
+| `RUN_TIMEOUT_MS` | `120000` | speedtest watchdog (§5); `0` turns it off |
 | `CONCURRENCY` · `DOWNLOAD_SEC` · `UPLOAD_SEC` | `4` · `5` · `5` | upstream defaults are 6 · 10 · 10 |
 | `LATENCY_SEC` · `PROBE_INTERVAL_MS` · `PROBE_TIMEOUT_MS` | `2` · `250` · `2000` | idle-latency window and probe cadence (upstream values). **`LATENCY_SAMPLES` is gone.** |
 | `DOWNLOAD_BYTES_PER_REQ` · `UPLOAD_BYTES_PER_REQ` | `10000000` · `5000000` | upstream values (v1 used 25 MB / 10 MB) |
@@ -341,12 +347,12 @@ Read from the upstream's `src/engine/*.rs`, `metrics.rs`, `quality.rs`, `constan
 
 | Item | State |
 |---|---|
-| **Run on a real VPN node** | Not yet. First deploy = pick one node, run the install line, watch `paired as`, leave it a day, then clear the §top banner. |
+| **Run on a real VPN node** | Two nodes (SWE-UP, OVH) on 0.2.0 since early September — that is how the hung-run stall of §5 was found. Update them to 0.2.1. |
 | **Published image** | Published 2026-09-03 (`latest` = `0b75260`, amd64 + arm64). **Still private** until the package visibility is switched to public in GitHub — until then the install line needs `docker login ghcr.io` first. |
 | **Repository is private** | **Blocks both install paths.** The Docker line pulls from GHCR (package private too) and the systemd line curls `install.sh` plus the source archive from GitHub — anonymously, both 404. Make the repo and the GHCR package public, or neither command works as printed. |
 | **`install.sh` on a real host** | Never run end to end: no Linux box and no Docker daemon here. Arg parsing, every error path and the geocheck download+checksum+extract are verified; the Node download, the systemd unit, the service user and `--uninstall` are not. |
 | **Single-binary distribution** | Not planned, and no longer needed: `install.sh` gives the Beszel-style one-liner without one, fetching a runtime when the host lacks it. A true SEA build would only remove the nodejs.org dependency, at the cost of a per-arch release pipeline. |
-| **History in the panel** | Not planned: the panel has no durable store; history stays on the agent (`/speedtest/history`, ndjson). |
+| **History in the panel** | The last 48 runs ride every heartbeat (0.2.1) so the chart survives a panel restart; the archive (1500 rows) stays on the agent (`/speedtest/history`, ndjson) — the panel has no durable store. |
 | **geocheck path analysis / tunnel detection** | Deliberately off (`--no-mtr --no-detect`): needs NET_RAW, takes minutes, different question. `GEOCHECK_ARGS` can turn it on; the digest ignores those sections. |
 | **UDP loss probe** (upstream TURN) | Not ported. |
 | **TLS on the local API** | Not needed: loopback only. |

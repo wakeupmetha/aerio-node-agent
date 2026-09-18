@@ -9,6 +9,16 @@
 //   - onDone / onError are the caller's hooks (store, log, heartbeat); their
 //     own failures are logged here and never break the loop.
 //   - intervalMs === 0 disables the loop; runOnce() still works.
+//   - timeoutMs > 0 is a watchdog: a run that has not settled by then is
+//     reported as failed and the loop moves on. Without it one hung run is
+//     the end of the loop — tick() awaits it before scheduling the next, and
+//     runOnce() hands every later caller (the panel's "Run now" included) the
+//     same never-settling promise. That is exactly what happened in prod: two
+//     nodes sat on `running: true` for six days while their heartbeats looked
+//     healthy.
+//     ponytail: the abandoned run is not cancelled, only forgotten — whatever
+//     it holds (a socket) stays until it settles; threading an AbortSignal
+//     through every phase is the upgrade if that ever shows up as a leak.
 
 import { logger } from './log.js';
 
@@ -19,6 +29,7 @@ export class Scheduler {
     minIntervalMs = 60_000,
     jitterPct = 0.15,
     firstDelayMs = 5_000,
+    timeoutMs = 0,
     run,
     onDone = () => {},
     onError = () => {},
@@ -28,6 +39,7 @@ export class Scheduler {
     this.intervalMs = intervalMs === 0 ? 0 : Math.max(minIntervalMs, intervalMs);
     this.jitterPct = Math.max(0, Math.min(1, jitterPct));
     this.firstDelayMs = firstDelayMs;
+    this.timeoutMs = timeoutMs;
     this.run = run;
     this.onDone = onDone;
     this.onError = onError;
@@ -66,7 +78,7 @@ export class Scheduler {
       const n = ++this.runCount;
       const t0 = Date.now();
       try {
-        const result = await this.run({ n });
+        const result = await this.guard(this.run({ n }));
         this.lastRunAt = new Date().toISOString();
         await this.hook(this.onDone, result, { n, elapsedMs: Date.now() - t0 });
         return result;
@@ -79,6 +91,18 @@ export class Scheduler {
       }
     })();
     return this.inflight;
+  }
+
+  guard(promise) {
+    if (!(this.timeoutMs > 0)) return promise;
+    let timer;
+    const watchdog = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`run timed out after ${Math.round(this.timeoutMs / 1000)}s`)),
+        this.timeoutMs,
+      );
+    });
+    return Promise.race([promise, watchdog]).finally(() => clearTimeout(timer));
   }
 
   async hook(fn, ...args) {
