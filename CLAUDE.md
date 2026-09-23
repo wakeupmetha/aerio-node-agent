@@ -2,9 +2,9 @@
 
 This file is the single source of truth for everything currently implemented in `cloudflare-speedtest-node` (the container is called `aerio-agent`). It supersedes `README.md` for technical content.
 
-> **Status (2026-09-03): v2, push model. Wire contract validated by tests and by a local end-to-end run against the panel, not yet by a production node.** Every module has `node --test` coverage and the measurement path has been run live against `speed.cloudflare.com`. What has NOT happened: a real VPN node running the published image for a day. Clear this banner when that has.
+> **Status (2026-09-24): v2, push model, in production.** Two production nodes have run 0.2.0 since early September (that is how the hung-run stall of §4 was found); 0.2.1 (watchdog + heartbeat history) was re-checked end to end on 2026-09-24 against a local panel: pairing, a queued «Run now» (10 s run, result and history in the registry), the 409 on a geocheck for an agent without one, and `silent` after the agent stopped. Production nodes still need the 0.2.1 image.
 
-There are no separate spec files in this repo. The cross-repo design that produced v2 is folded into the panel's docs: [aerio-crm/CLAUDE.md §4](../aerio-crm/CLAUDE.md) (registry, wire contract) and §8 (`/nodes` block); the implementation plan is kept at `aerio-crm/docs/superpowers/plans/2026-09-03-speedtest-agent-v2.md`.
+There are no separate spec files in this repo. The cross-repo design that produced v2 is folded into the panel's docs: [aerio-crm/CLAUDE.md §4](../../aerio/console/CLAUDE.md) (registry, wire contract) and §8 (`/nodes` block); the implementation plan is kept at `aerio-crm/docs/superpowers/plans/2026-09-03-speedtest-agent-v2.md`.
 
 ---
 
@@ -44,7 +44,7 @@ The same protocol applies in `aerio-crm`; the heartbeat contract is documented o
 | Local port | **9101**, **loopback only** by default — the panel never reads it |
 | Storage | `/data/history.ndjson` (ring, 1500 rows ≈ 31 days) + `/data/geocheck.json` (last digest) |
 | Outbound traffic | `speed.cloudflare.com` (each run), `ip-api.com` (once at boot), `PANEL_URL` (every 30 s), the ~40 hosts geocheck probes (every 6 h) |
-| Consumer | `aerio-crm` — `services/api` ingests `POST /agent/heartbeat`; `/nodes` renders it. Detail: [aerio-crm/CLAUDE.md §4](../aerio-crm/CLAUDE.md) |
+| Consumer | `aerio-crm` — `services/api` ingests `POST /agent/heartbeat`; `/nodes` renders it. Detail: [aerio-crm/CLAUDE.md §4](../../aerio/console/CLAUDE.md) |
 
 ### Pairing in one paragraph
 
@@ -55,7 +55,7 @@ The panel stores one opaque secret per Remnawave node name (`admin.speedtest.tok
 ## 2. Local development
 
 ```bash
-npm test                                            # 25 tests, ~3 s
+npm test                                            # 27 tests, ~7 s
 TOKEN=devtok node src/index.js                      # standalone: no push, local API only
 TOKEN=devtok PANEL_URL=http://localhost:3030 INTERVAL_MS=120000 node src/index.js   # against a local panel
 ```
@@ -114,7 +114,7 @@ curl -s -H "Authorization: Bearer devtok" localhost:9101/speedtest/last
 
 ### Heartbeat — `POST ${PANEL_URL}/api/agent/heartbeat`
 
-Headers: `Authorization: Bearer <TOKEN>`, `Content-Type: application/json`, `User-Agent: cloudflare-speedtest-node/<ver>`. 10 s timeout. Sent every `HEARTBEAT_MS`, immediately at boot, right after every speedtest run (success or failure — the failure travels as `lastRunError`), and after every **successful** geocheck run. A failed geocheck run only logs: the body has no field for it, and the previous digest stays valid.
+Headers: `Authorization: Bearer <TOKEN>`, `Content-Type: application/json`, `User-Agent: cloudflare-speedtest-node/<ver>`. 10 s timeout. Sent every `HEARTBEAT_MS`, immediately at boot, right after every speedtest run (success or failure — the failure travels as `lastRunError`), and after every **successful** geocheck run. A failed geocheck run only logs: the body has no field for it, and the previous digest stays valid. The panel refuses to queue a `geocheck` command for an agent that reported `geocheck: false` (409 `geocheck_disabled`, since 2026-09-24) — the agent would otherwise accept it and drop it in its own log, and the operator's «Run now» would hang.
 
 ```jsonc
 {
@@ -207,7 +207,7 @@ A speedtest and a geocheck may overlap: geocheck is ~40 small HTTPS requests and
 
 `history.ndjson` in `DATA_DIR` — append-only ring, `MAX_HISTORY` rows, compacted (tmp + atomic rename) when the file exceeds 2×; malformed lines skipped on hydration. Unchanged from v1.
 
-`geocheck.json` next to it — the last digest, written tmp + rename after every successful geocheck run and restored at boot so the panel is not blank for up to `GEOCHECK_INTERVAL_MS` after a container recreate.
+`geocheck.json` next to it — the last digest, written tmp + rename after every successful geocheck run and restored at boot so the panel is not blank for up to `GEOCHECK_INTERVAL_MS` after a container recreate. **Only a digest with `ranAt` and `services[]` is restored (2026-09-24)**: the panel requires both, and a truncated or hand-edited file used to turn every heartbeat into a 400 until the next geocheck overwrote it.
 
 ---
 
@@ -217,7 +217,7 @@ A speedtest and a geocheck may overlap: geocheck is ~40 small HTTPS requests and
 |---|---|---|
 | `TOKEN` | — | **required**; empty is fatal (framed error, exit 1) |
 | `PANEL_URL` | `""` | panel origin; must start with `http(s)://`; empty ⇒ standalone (WARN at boot, no push) |
-| `HEARTBEAT_MS` | `30000` | floor 5 s |
+| `HEARTBEAT_MS` | `30000` | clamped to 5 s – 1 h and rounded — the panel's zod schema rejects anything else with a 400 on every beat (2026-09-24) |
 | `INTERVAL_MS` · `JITTER_PCT` · `FIRST_DELAY_MS` | `1800000` · `0.15` · `5000` | speedtest cadence (floor 60 s) |
 | `RUN_TIMEOUT_MS` | `120000` | speedtest watchdog (§5); `0` turns it off |
 | `CONCURRENCY` · `DOWNLOAD_SEC` · `UPLOAD_SEC` | `4` · `5` · `5` | upstream defaults are 6 · 10 · 10 |

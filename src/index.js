@@ -28,7 +28,10 @@ const boot = logger('boot');
 // ── env ─────────────────────────────────────────────────────────────────────
 const token = env('TOKEN');
 const panelUrl = env('PANEL_URL').replace(/\/+$/, '');
-const heartbeatMs = Math.max(5_000, num('HEARTBEAT_MS', 30_000));
+// The panel validates 5 s – 1 h, integer (console services/api/src/routes/
+// agent.ts): a value outside it got a 400 on every beat and the agent never
+// paired, with one WARN and then silence. Clamp and round here instead.
+const heartbeatMs = Math.round(Math.min(3_600_000, Math.max(5_000, num('HEARTBEAT_MS', 30_000))));
 
 // Local API: loopback by default — the panel never reads it, the docker
 // healthcheck and a curl on the node do.

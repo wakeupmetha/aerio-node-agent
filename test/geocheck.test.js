@@ -75,6 +75,10 @@ test('digest round-trips through disk; missing file is null', async () => {
   const d = digestGeocheck(fixture);
   await saveDigest(file, d);
   assert.deepEqual(await loadDigest(file), d);
+  // A file the panel would reject (no ranAt / services) is not restored: it
+  // would turn every heartbeat into a 400 until the next geocheck.
+  await saveDigest(file, { country: 'DE' });
+  assert.equal(await loadDigest(file), null);
 });
 
 test('resolveGeocheckBin: PATH search and absolute paths', async () => {

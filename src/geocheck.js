@@ -138,9 +138,14 @@ export function digestGeocheck(r, { durationMs } = {}) {
 
 // The last digest survives a restart so the panel is not blank for up to
 // GEOCHECK_INTERVAL_MS after every container recreate.
+//
+// Only a digest of the shape the panel accepts is restored: the panel's zod
+// schema requires `ranAt` and `services[]`, and a hand-edited or truncated file
+// without them made EVERY heartbeat a 400 until the next geocheck overwrote it.
 export async function loadDigest(file) {
   try {
-    return JSON.parse(await readFile(file, 'utf8'));
+    const d = JSON.parse(await readFile(file, 'utf8'));
+    return d && typeof d.ranAt === 'string' && Array.isArray(d.services) ? d : null;
   } catch {
     return null;
   }
