@@ -1,199 +1,119 @@
-# aerio-agent (cloudflare-speedtest-node)
+# aerio-agent (aerio-node-agent)
 
-Per-node agent for the aerio panel. Runs a Cloudflare speedtest on a
-schedule, checks which consumer services accept the node's IP with
-[remnawave/geocheck](https://github.com/remnawave/geocheck), and reports
-both to the panel over an outbound heartbeat. Zero dependencies, one Docker
-image, one volume. Node ≥ 20 for a bare install.
+Агент на каждой VPN-ноде: замеряет канал до Cloudflare и доступность сервисов через geocheck, отправляет результаты в консоль `console.aerio.my` исходящим хартбитом.
 
-Measurement follows [cloudflare-speed-cli](https://github.com/kavehtehrani/cloudflare-speed-cli):
-idle + loaded latency, steady-state throughput, bufferbloat and stability
-grades.
+[![docker.yml](https://github.com/wakeupmetha/aerio-node-agent/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/wakeupmetha/aerio-node-agent/actions/workflows/docker.yml)
 
-## Install (from the panel)
+![aerio--agent](https://img.shields.io/badge/aerio--agent-0.2.1-555555)
+![Node.js](https://img.shields.io/badge/Node.js-20-5FA04E?logo=nodedotjs&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-node:20--alpine-2496ED?logo=docker&logoColor=white)
+![Platforms](https://img.shields.io/badge/platforms-amd64_%7C_arm64-2496ED?logo=linux&logoColor=white)
+![geocheck](https://img.shields.io/badge/remnawave%2Fgeocheck-latest-00ADD8?logo=go&logoColor=white)
+![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 
-On the panel's `/nodes` page, click the key icon on a node → **Generate
-token**. The dialog prints a ready command with the panel URL and the token
-already in it, in two flavours — pick whichever the node runs.
+## Что это
 
-**Docker:**
+- Speedtest по расписанию (по умолчанию раз в 30 мин): задержка в покое и под нагрузкой, пропускная способность, оценки bufferbloat и стабильности — как в [cloudflare-speed-cli](https://github.com/kavehtehrani/cloudflare-speed-cli).
+- Проверка сервисов через [remnawave/geocheck](https://github.com/remnawave/geocheck) (раз в 6 ч): какие сервисы пускают IP ноды.
+- Раз в 30 с шлёт `POST ${PANEL_URL}/api/agent/heartbeat` с `Authorization: Bearer <TOKEN>` и забирает команды «Run now». Порт открывать не нужно, агент только подключается наружу.
+- Node.js ≥ 20, ноль сторонних зависимостей, один Docker-образ с geocheck внутри, один volume.
+- Полный справочник — [CLAUDE.md](CLAUDE.md): §4 «Wire contract» (хартбит и локальный API), §5 «Schedulers», §7 «Environment variables», §8 «Build & deploy», §9 «Logs».
 
-```bash
-docker run -d --name aerio-agent --restart unless-stopped \
-  -e PANEL_URL=https://console.aerio.my -e TOKEN=<token> \
-  -v aerio-agent-data:/data ghcr.io/wakeupmetha/cloudflare-speedtest-node:latest
-```
+## Запуск на новом сервере
 
-**systemd, no Docker:**
+**Что нужно:** Linux-нода с Docker (для варианта через compose — ещё плагин `docker compose`) или с systemd для установки без Docker. Нода уже заведена в Remnawave, и консоль (`aerio-crm`) доступна с ноды по HTTPS: сначала поднимаются aerio-v2 и консоль, потом агенты. Домен, reverse proxy и открытые порты на ноде не нужны.
 
-```bash
-curl -sL https://raw.githubusercontent.com/wakeupmetha/cloudflare-speedtest-node/main/install.sh -o /tmp/aerio-agent-install.sh \
-  && chmod +x /tmp/aerio-agent-install.sh \
-  && sudo /tmp/aerio-agent-install.sh -t "<token>" -url "https://console.aerio.my"
-```
+1. Получить токен. В консоли, на странице `/cluster`, выбрать ноду, открыть диалог агента и нажать **Generate token**. Диалог сразу показывает готовую команду установки с `PANEL_URL` и `TOKEN`.
+2. Установить **одним из способов**.
 
-[install.sh](install.sh) puts the agent under `/opt/aerio-agent` as a
-systemd unit running under its own system user. Node is **not** a
-prerequisite: if the host has nothing newer than 20 the script fetches the
-official tarball into the prefix and leaves the system Node alone.
-`geocheck` comes from its own releases. Both downloads are checksum-verified,
-and the token is written to a root-only `0600` env file rather than into the
-unit, which `systemctl cat` shows to anyone.
+   **Docker** (основной способ). GHCR-пакет пока **приватный**, поэтому сначала войти в реестр токеном GitHub с правом `read:packages` (или собрать образ локально, см. «Откат»):
 
-Then watch it pair, either way:
+   ```bash
+   echo <github-pat> | docker login ghcr.io -u <github-user> --password-stdin
+   ```
 
-```bash
-docker logs -f aerio-agent        # or: journalctl -u aerio-agent -f
-# 12:00:02  INFO   panel       paired as "de-fra-1"  url=https://console.aerio.my rtt=84
-```
+   ```bash
+   docker run -d --name aerio-agent --restart unless-stopped \
+     -e PANEL_URL=https://console.aerio.my -e TOKEN=<token> \
+     -v aerio-agent-data:/data ghcr.io/wakeupmetha/cloudflare-speedtest-node:latest
+   ```
 
-The agent connects **out** to the panel. No port to open, no TLS on the
-node, no firewall rule, and nothing to register on the panel side — the
-token is the addressing. The card on `/nodes` fills in within 30 s.
+   **Compose** (из клона репозитория):
 
-Both paths need this repository to be **public**: the Docker one pulls from
-GHCR, the systemd one curls the script and the source from GitHub. A private
-repo makes the first need `docker login ghcr.io` and the second fail outright.
+   ```bash
+   git clone https://github.com/wakeupmetha/aerio-node-agent.git && cd aerio-node-agent
+   cp .env.example .env        # заполнить TOKEN (PANEL_URL уже стоит)
+   docker compose up -d
+   ```
 
-### Upgrading, rotating, removing
+   **systemd, без Docker.** Скрипт ставит агента в `/opt/aerio-agent` под отдельным пользователем. Если на хосте нет Node ≥ 20, скрипт скачает её сам. Токен кладётся в `/etc/aerio-agent.env` с правами `0600`:
 
-Re-run the same install command with the new token — both paths replace the
-agent in place and keep the measurement history (`aerio-agent-data` volume,
-or `/opt/aerio-agent/data`). To remove the systemd install:
-`sudo /tmp/aerio-agent-install.sh --uninstall` (add `--purge` to drop the
-data too); for Docker, `docker rm -f aerio-agent`.
+   ```bash
+   curl -sL https://raw.githubusercontent.com/wakeupmetha/cloudflare-speedtest-node/main/install.sh -o /tmp/aerio-agent-install.sh \
+     && chmod +x /tmp/aerio-agent-install.sh \
+     && sudo /tmp/aerio-agent-install.sh -t "<token>" -url "https://console.aerio.my"
+   ```
 
-`install.sh --help` lists the rest: `--interval`, `--geocheck-interval`,
-`--no-geocheck`, and the `NODE_VERSION` / `PREFIX` env overrides.
+   Образ имеет имя `cloudflare-speedtest-node`, а не `aerio-node-agent`: имя образа закрепили до переименования репозитория, потому что ноды тянут образ по нему. Пока репозиторий и GHCR-пакет приватные, `docker login ghcr.io` нужен на каждой ноде, а systemd-вариант (скачивает `install.sh` и архив исходников анонимно) не работает вовсе. Когда их сделают публичными, логин станет не нужен.
+3. Проверить, что агент работает. В логах должна появиться строка `paired as "<нода>"`, а карточка ноды на `/cluster` заполнится в течение 30 с:
 
-### With compose
+   ```bash
+   docker logs -f aerio-agent        # compose: docker compose logs -f · systemd: journalctl -u aerio-agent -f
+   docker exec aerio-agent wget -qO- http://127.0.0.1:9101/health   # panel.paired, panel.lastError
+   curl -s http://127.0.0.1:9101/health                              # systemd: агент слушает loopback хоста
+   ```
 
-```bash
-cp .env.example .env     # set PANEL_URL + TOKEN
-docker compose up -d
-docker compose logs -f
-```
+4. **Обновление.** Для Docker: `docker pull ghcr.io/wakeupmetha/cloudflare-speedtest-node:latest`, затем `docker rm -f aerio-agent` и снова команда `docker run` из шага 2. Для compose: `git pull && docker compose pull && docker compose up -d`. Для systemd: заново выполнить всю строку `curl … && sudo …` из шага 2 — скрипт в `/tmp` мог не пережить перезагрузку. Во всех трёх случаях история сохраняется: она лежит в volume `aerio-agent-data` или в `/opt/aerio-agent/data`.
+5. **Откат.** CI публикует `latest` из `main`, а теги `X.Y.Z`/`X.Y` — только из git-тегов `v*`, которых пока нет. Поэтому откатиться сейчас можно только локальной сборкой из клона на нужном коммите (`git checkout <коммит>`):
+   - compose: `docker compose build && docker compose up -d`. Сборка идёт под тегом `…/cloudflare-speedtest-node:latest`, поэтому следующий `docker compose pull` из шага 4 молча вернёт свежий образ;
+   - `docker run`: `docker build -t aerio-agent:<коммит> .`, затем `docker rm -f aerio-agent` и команда из шага 2 с образом `aerio-agent:<коммит>` вместо `ghcr.io/…:latest`;
+   - systemd: скачать скрипт заново, как в шаге 2, и запустить с `AERIO_AGENT_REF`: `sudo AERIO_AGENT_REF=<коммит> /tmp/aerio-agent-install.sh -t … -url …`.
+6. **Удаление.** Для Docker: `docker rm -f aerio-agent`. Для systemd: скачать скрипт, как в шаге 2 (первые две команды строки), затем `sudo /tmp/aerio-agent-install.sh --uninstall`; с `--purge` удалятся и данные.
 
-`.env` is loaded into the container as a whole (`env_file`), so every knob
-in `.env.example` works from there. No image on GHCR, or want your own
-build? `docker compose build` builds the same tag locally, and
-`docker compose up -d` builds automatically when the image is missing.
+## Обязательные переменные окружения
 
-### From a checkout (development, or a host `install.sh` does not cover)
-
-Node ≥ 20 and, for the service checks, the `geocheck` binary on `PATH`
-(`go install github.com/remnawave/geocheck/cmd/geocheck@latest`, or a release
-tarball). No `npm install` — there is nothing to install.
-
-```bash
-PANEL_URL=https://console.aerio.my TOKEN=<token> node src/index.js
-```
-
-History and the last geocheck digest are written to `./data/` relative to
-the current directory; set `DATA_DIR` to move them. This is the path for
-macOS and for anything without systemd — `install.sh` refuses to run there
-rather than half-installing.
-
-## What the panel receives
-
-Every 30 s, right after each speedtest run, and after each successful
-geocheck run, the agent POSTs to `${PANEL_URL}/api/agent/heartbeat` with
-`Authorization: Bearer <TOKEN>`: its version and public IP/geo, whether a
-run is in progress, the latest speedtest row, the reason of the last failed
-speedtest, and the latest geocheck digest. The panel answers with the node
-name it resolved the token to and any queued commands (`speedtest`,
-`geocheck` — the "Run now" buttons).
-
-## Reading the logs
-
-One line per event, same format as the panel:
-
-```
-12:00:01  INFO   boot        aerio-agent 0.2.0 starting  node=v20.19.0 logLevel=info panel=https://console.aerio.my heartbeatMs=30000 speedtestMs=1800000 geocheck=/usr/local/bin/geocheck listen=127.0.0.1:9101 history=0
-12:00:02  INFO   panel       paired as "de-fra-1"  url=https://console.aerio.my rtt=84
-12:00:07  INFO   speedtest   run #1 started
-12:00:21  INFO   speedtest   run #1 done  dl=918.5 ul=482 lat=11.8 jitter=1.6 bloat=A stability=A colo=ARN elapsed=14.1s
-12:01:02  INFO   geocheck    run #1 done  available=11 restricted=1 blocked=2 error=0 country=DE reputation=hosting elapsed=21.4s
-12:01:02  WARN   geocheck    blocked: Google Search captcha, TikTok
-```
-
-The lines to look for when a node does not show up:
-
-| Line | Meaning | Fix |
+| Переменная | Зачем | Как получить / пример |
 |---|---|---|
-| `ERROR  panel  token rejected by panel — regenerate it on /nodes and restart the agent` | The panel does not know this TOKEN | Generate a token for this node on `/nodes` and re-run the install command (see *Token rotation*) |
-| `WARN   panel  unreachable  err="fetch failed: ECONNREFUSED"` | `PANEL_URL` is wrong or the panel is down | Check the URL; the agent retries every 30 s and logs `paired as …` when it recovers |
-| `WARN   panel  node address mismatch — is this token for this node?` | The token belongs to a different Remnawave node | You pasted another node's command |
-| `WARN   geocheck  binary not found` | Bare install without `geocheck` on `PATH` | Install it or set `GEOCHECK_BIN`; speedtests still run |
-| `WARN   speedtest  run #N failed  err="no bytes transferred …"` | `speed.cloudflare.com` unreachable from the node | Network / egress problem on the node |
+| `TOKEN` | **Секрет.** По нему консоль определяет, какая это нода. Без токена агент не запускается (`TOKEN is not set — refusing to start`, exit 1) | Генерируется в консоли, в диалоге агента на `/cluster`, отдельно для каждой ноды. Сгенерировать его самому нельзя: токен должен лежать в `admin.speedtest.tokens` на стороне aerio-v2 |
+| `PANEL_URL` | Адрес консоли, куда агент шлёт хартбиты. Должен начинаться с `http(s)://`, иначе агент завершится с ошибкой. Если оставить пустым, агент запустится автономно и будет только замерять, ничего никуда не отправляя | `https://console.aerio.my` |
 
-Each speedtest also prints a framed result box. A healthy heartbeat is
-silent at every level — check `/health` → `panel.lastOkAt` instead.
-`LOG_LEVEL=debug` shows every failed heartbeat while a failure persists
-(WARN/ERROR is printed on the transition only). `LOG_JSON=1` switches to
-one JSON object per line and drops the boxes.
+Остальные переменные (частота замеров, параметры измерения, geocheck, логи, локальный API) с описанием и значениями по умолчанию перечислены в [.env.example](.env.example) и в [CLAUDE.md](CLAUDE.md) §7.
 
-## Local API
+## Локальная разработка
 
-Loopback-only by default (`BIND=127.0.0.1`); the panel never reads it.
-Bearer is the same `TOKEN`.
+```bash
+npm test                                   # node --test, без фреймворка
+TOKEN=devtok node src/index.js             # автономно: без консоли, только локальный API на 127.0.0.1:9101
+TOKEN=<из консоли> PANEL_URL=http://localhost:3030 INTERVAL_MS=120000 node src/index.js
+```
 
-| Route | Auth | Returns |
+Для последней команды консоль должна быть запущена локально на моке — launch-конфиги `crm-mock` + `crm-api-mock` в `aerio-crm` (`.claude/launch.json`). Обычные `npm run dev` + `npm run dev:api` читают `.env.local`, который смотрит в прод, и **Generate token** записал бы токен в боевой реестр; мок держит токены в памяти процесса. Токен берётся на её странице `/cluster`, с выдуманным значением агент раз в 10 минут пишет `token rejected`. Чтобы работали проверки сервисов, `geocheck` должен быть в `PATH`: `go install github.com/remnawave/geocheck/cmd/geocheck@latest`. Без него агент выдаёт одно предупреждение и делает только speedtest.
+
+## Трафик
+
+Каждый замер длится 10 с и ограничен временем, а не объёмом, поэтому потребление растёт со скоростью канала. На линке 500 Мбит один замер — около 650 МБ, при интервале 30 мин это примерно 31 ГБ в сутки. Сократить потребление проще всего через `INTERVAL_MS`, а затем через `DOWNLOAD_SEC` / `UPLOAD_SEC` / `CONCURRENCY`.
+
+## Логи: если нода не появилась в консоли
+
+| Строка | Что значит | Что делать |
 |---|---|---|
-| `GET /health` | none | scheduler state, pairing state (`panel.paired`, `panel.lastError`), geocheck state |
-| `GET /speedtest/last` | Bearer | last result (404 before the first run) |
-| `GET /speedtest/history?since=<ms>&limit=<n>` | Bearer | rolling history |
-| `GET /speedtest` | Bearer | force a run (shares an in-flight one) |
-| `GET /geocheck/last` | Bearer | last geocheck digest |
-| `GET /geocheck` | Bearer | force a geocheck run |
+| `ERROR panel token rejected by panel` | Консоль не знает этот `TOKEN` | Сгенерировать токен для этой ноды на `/cluster` и переустановить агента |
+| `WARN panel unreachable` | Неверный `PANEL_URL` или консоль недоступна | Проверить URL. Агент повторяет попытку каждые 30 с и, когда связь восстановится, пишет `paired as …` |
+| `WARN panel node address mismatch` | Публичный IP ноды не совпадает с её адресом в Remnawave. За NAT или при адресе-хостнейме это нормально, агент работает | Если нода не за NAT и заведена по IP — проверить, что токен взят из диалога именно этой ноды |
+| `WARN geocheck binary not found` | systemd: `install.sh` не смог скачать geocheck или запущен с `--no-geocheck`. Ручной запуск: `geocheck` нет в `PATH` | Перезапустить `install.sh` (шаг 2); вручную — установить `geocheck` или задать `GEOCHECK_BIN`. Speedtest работает и без него |
+| `WARN speedtest run #N failed` | С ноды недоступен `speed.cloudflare.com` | Проблема с сетью или исходящим трафиком на ноде |
 
-The image is Alpine with `wget`, no `curl`:
+Когда хартбиты проходят успешно, агент ничего не пишет в лог: состояние видно в `/health` → `panel.lastOkAt`. `LOG_LEVEL=debug` выводит каждый неудачный хартбит, `LOG_JSON=1` переключает лог в JSON.
 
-```bash
-docker exec aerio-agent wget -qO- http://127.0.0.1:9101/health
-docker exec aerio-agent wget -qO- --header="Authorization: Bearer $TOKEN" http://127.0.0.1:9101/speedtest/last
-```
+## Локальный API
 
-## Environment
+По умолчанию API слушает только loopback (`BIND=127.0.0.1`, порт `9101`), консоль его не читает. Все маршруты, кроме `/health`, требуют `Authorization: Bearer <TOKEN>`.
 
-`.env.example` lists every variable, commented where the default is fine.
-The ones that matter:
+| Маршрут | Возвращает |
+|---|---|
+| `GET /health` | состояние планировщиков, связи с консолью и geocheck (без авторизации) |
+| `GET /speedtest/last` · `GET /speedtest/history?since=&limit=` | последний замер и историю |
+| `GET /speedtest` · `GET /geocheck` | запустить замер или geocheck немедленно |
+| `GET /geocheck/last` | последний дайджест geocheck |
 
-| Var | Default | Meaning |
-|---|---|---|
-| `PANEL_URL` | (empty = standalone) | Panel origin, e.g. `https://console.aerio.my` |
-| `TOKEN` | — | **Required.** Minted on `/nodes` |
-| `HEARTBEAT_MS` | 30000 | Heartbeat cadence (floor 5 s) |
-| `INTERVAL_MS` | 1800000 | Speedtest cadence (floor 60 s), ±`JITTER_PCT` |
-| `GEOCHECK_INTERVAL_MS` | 21600000 | geocheck cadence (floor 10 min; 0 disables) |
-| `CONCURRENCY` / `DOWNLOAD_SEC` / `UPLOAD_SEC` | 4 / 5 / 5 | Streams and phase lengths. The phases are timed, not sized: a run moves whatever the link carries for 10 s — ~650 MB measured on a 500 Mbit link, ~31 GB/day at the 30 min default |
-| `LOG_LEVEL` | info | `none` … `debug`; `LOG_JSON=1`, `LOG_COLOR=0` |
-
-## Token rotation
-
-Rotate on `/nodes`; the dialog shows a new install command.
-
-- **systemd**: re-run the new command as-is — it rewrites the env file and
-  restarts the unit.
-- **`docker run`**: `docker rm -f aerio-agent`, then paste the new command.
-  The `aerio-agent-data` volume keeps history and the last geocheck result.
-- **compose**: update `TOKEN` in `.env`, `docker compose up -d`.
-
-Until the agent restarts with the new value it logs `token rejected` every
-10 minutes and keeps measuring.
-
-## Development
-
-```bash
-npm test                                   # node --test, no framework
-TOKEN=devtok node src/index.js             # standalone, no panel
-```
-
-Against a local panel, the panel must be up (`npm run dev` +
-`npm run dev:api` in `aerio-crm`); mint a token on
-`http://localhost:3030/nodes` and use it as `TOKEN` — a made-up value gets
-`token rejected` every 10 minutes:
-
-```bash
-TOKEN=<from /nodes> PANEL_URL=http://localhost:3030 INTERVAL_MS=120000 node src/index.js
-```
+В образе есть `wget`, а `curl` нет: `docker exec aerio-agent wget -qO- --header="Authorization: Bearer $TOKEN" http://127.0.0.1:9101/speedtest/last`.
