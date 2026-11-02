@@ -1,10 +1,10 @@
 # aerio-agent (aerio-node-agent)
 
-Агент на каждой VPN-ноде: замеряет канал до Cloudflare и доступность сервисов через geocheck, отправляет результаты в консоль `console.aerio.my` исходящим хартбитом.
+Агент на каждой VPN-ноде: замеряет канал до Cloudflare и доступность сервисов через geocheck, отправляет результаты в ядро `gw.aerio.my` исходящим хартбитом.
 
 [![docker.yml](https://github.com/wakeupmetha/aerio-node-agent/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/wakeupmetha/aerio-node-agent/actions/workflows/docker.yml)
 
-![aerio--agent](https://img.shields.io/badge/aerio--agent-0.2.1-555555)
+![aerio--agent](https://img.shields.io/badge/aerio--agent-0.3.0-555555)
 ![Node.js](https://img.shields.io/badge/Node.js-20-5FA04E?logo=nodedotjs&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-node:20--alpine-2496ED?logo=docker&logoColor=white)
 ![Platforms](https://img.shields.io/badge/platforms-amd64_%7C_arm64-2496ED?logo=linux&logoColor=white)
@@ -13,7 +13,7 @@
 
 ## Что это
 
-- Speedtest по расписанию (по умолчанию раз в 30 мин): задержка в покое и под нагрузкой, пропускная способность, оценки bufferbloat и стабильности — как в [cloudflare-speed-cli](https://github.com/kavehtehrani/cloudflare-speed-cli).
+- Speedtest по расписанию (по умолчанию отключён; включается через `INTERVAL_MS`): задержка в покое и под нагрузкой, пропускная способность, оценки bufferbloat и стабильности — как в [cloudflare-speed-cli](https://github.com/kavehtehrani/cloudflare-speed-cli).
 - Проверка сервисов через [remnawave/geocheck](https://github.com/remnawave/geocheck) (раз в 6 ч): какие сервисы пускают IP ноды.
 - Раз в 30 с шлёт `POST ${PANEL_URL}/api/agent/heartbeat` с `Authorization: Bearer <TOKEN>` и забирает команды «Run now». Порт открывать не нужно, агент только подключается наружу.
 - Node.js ≥ 20, ноль сторонних зависимостей, один Docker-образ с geocheck внутри, один volume.
@@ -34,7 +34,7 @@
 
    ```bash
    docker run -d --name aerio-agent --restart unless-stopped \
-     -e PANEL_URL=https://console.aerio.my -e TOKEN=<token> \
+     -e PANEL_URL=https://gw.aerio.my -e TOKEN=<token> \
      -v aerio-agent-data:/data ghcr.io/wakeupmetha/cloudflare-speedtest-node:latest
    ```
 
@@ -51,7 +51,7 @@
    ```bash
    curl -sL https://raw.githubusercontent.com/wakeupmetha/cloudflare-speedtest-node/main/install.sh -o /tmp/aerio-agent-install.sh \
      && chmod +x /tmp/aerio-agent-install.sh \
-     && sudo /tmp/aerio-agent-install.sh -t "<token>" -url "https://console.aerio.my"
+     && sudo /tmp/aerio-agent-install.sh -t "<token>" -url "https://gw.aerio.my"
    ```
 
    Образ имеет имя `cloudflare-speedtest-node`, а не `aerio-node-agent`: имя образа закрепили до переименования репозитория, потому что ноды тянут образ по нему. Пока репозиторий и GHCR-пакет приватные, `docker login ghcr.io` нужен на каждой ноде, а systemd-вариант (скачивает `install.sh` и архив исходников анонимно) не работает вовсе. Когда их сделают публичными, логин станет не нужен.
@@ -74,8 +74,8 @@
 
 | Переменная | Зачем | Как получить / пример |
 |---|---|---|
-| `TOKEN` | **Секрет.** По нему консоль определяет, какая это нода. Без токена агент не запускается (`TOKEN is not set — refusing to start`, exit 1) | Генерируется в консоли, в диалоге агента на `/cluster`, отдельно для каждой ноды. Сгенерировать его самому нельзя: токен должен лежать в `admin.speedtest.tokens` на стороне aerio-v2 |
-| `PANEL_URL` | Адрес консоли, куда агент шлёт хартбиты. Должен начинаться с `http(s)://`, иначе агент завершится с ошибкой. Если оставить пустым, агент запустится автономно и будет только замерять, ничего никуда не отправляя | `https://console.aerio.my` |
+| `TOKEN` | **Секрет.** По нему ядро определяет, какая это нода. Без токена агент не запускается (`TOKEN is not set — refusing to start`, exit 1) | Генерируется в консоли, в диалоге агента на `/cluster`, отдельно для каждой ноды. Сгенерировать его самому нельзя: токен должен лежать в `admin.speedtest.tokens` на стороне aerio-v2 |
+| `PANEL_URL` | Адрес ядра, куда агент шлёт хартбиты. Должен начинаться с `http(s)://`, иначе агент завершится с ошибкой. Если оставить пустым, агент запустится автономно и будет только замерять, ничего никуда не отправляя | `https://gw.aerio.my` |
 
 Остальные переменные (частота замеров, параметры измерения, geocheck, логи, локальный API) с описанием и значениями по умолчанию перечислены в [.env.example](.env.example) и в [CLAUDE.md](CLAUDE.md) §7.
 
@@ -87,11 +87,19 @@ TOKEN=devtok node src/index.js             # автономно: без конс
 TOKEN=<из консоли> PANEL_URL=http://localhost:3030 INTERVAL_MS=120000 node src/index.js
 ```
 
-Для последней команды консоль должна быть запущена локально на моке — launch-конфиги `crm-mock` + `crm-api-mock` в `aerio-crm` (`.claude/launch.json`). Обычные `npm run dev` + `npm run dev:api` читают `.env.local`, который смотрит в прод, и **Generate token** записал бы токен в боевой реестр; мок держит токены в памяти процесса. Токен берётся на её странице `/cluster`, с выдуманным значением агент раз в 10 минут пишет `token rejected`. Чтобы работали проверки сервисов, `geocheck` должен быть в `PATH`: `go install github.com/remnawave/geocheck/cmd/geocheck@latest`. Без него агент выдаёт одно предупреждение и делает только speedtest.
+Для последней команды консоль должна быть запущена локально на моке — launch-конфиги `crm-mock` + `crm-api-mock` в `aerio-crm` (`.claude/launch.json`). Обычные `npm run dev` + `npm run dev:api` читают `.env.local`, который смотрит в прод, и **Generate token** записал бы токен в боевой реестр; мок держит токены в памяти процесса. Токен берётся на её странице `/cluster`, с выдуманным значением агент раз в 10 минут пишет `token rejected`. Чтобы работали проверки сервисов, `geocheck` должен быть в `PATH`: `go install github.com/remnawave/geocheck/cmd/geocheck@latest`. Без него агент выдаёт предупреждение; плановый speedtest по умолчанию выключен.
+
+## Повторная доставка geocheck
+
+Каждый результат geocheck сначала записывается в `geocheck-outbox.json` рядом с `DATA_FILE` (по умолчанию в `DATA_DIR`) и отправляется ядру вместе с heartbeat. В очереди остаются все неполучившие подтверждение результаты, в порядке их создания. После ошибки соединения агент повторяет запрос с увеличивающейся задержкой (с джиттером около 5 секунд до интервала heartbeat, по умолчанию 30 секунд); подтверждённые записи удаляются, затем очередь отправляется дальше. Ядро записывает событие и идентификатор доставки одной транзакцией, поэтому потерянный ответ повторяется без дублирования событий. Повтор старого запроса распознаётся по последним 128 идентификаторам.
+
+Число ожидающих результатов доступно в локальном `/health` → `panel.pendingDeliveries`; отсутствие подтверждения от старого приёмника отображается в логе. Очередь переживает перезапуск процесса при сохранённом каталоге данных или Docker volume, не содержит токен и не имеет автоматического ограничения размера: при длительном отключении она растёт. При ошибке записи или повреждённой очереди агент сообщает об ошибке; потерю тома или отказ диска очередь не переживёт. Результаты geocheck, сделанные старой версией агента до её обновления, не восстанавливаются задним числом.
+
+Сначала разверните ядро с поддержкой `deliveryAck`, затем обновите агент, сохранив volume. Со старым ядром или старой консолью агент продолжает отправлять последний снимок обычным heartbeat, но сохраняет очередь, пока ядро не начнёт подтверждать доставку. Telegram-уведомление после приёма в ядре отправляется отдельно и не подтверждается этой очередью.
 
 ## Трафик
 
-Каждый замер длится 10 с и ограничен временем, а не объёмом, поэтому потребление растёт со скоростью канала. На линке 500 Мбит один замер — около 650 МБ, при интервале 30 мин это примерно 31 ГБ в сутки. Сократить потребление проще всего через `INTERVAL_MS`, а затем через `DOWNLOAD_SEC` / `UPLOAD_SEC` / `CONCURRENCY`.
+Плановые активные speedtest по умолчанию выключены (`INTERVAL_MS=0`). Ручной запуск и явная настройка положительного интервала создают тестовый трафик. При включении каждый замер длится 10 с и ограничен временем, а не объёмом, поэтому потребление растёт со скоростью канала. На линке 500 Мбит один замер — около 650 МБ, при интервале 30 мин это примерно 31 ГБ в сутки. Сократить потребление проще всего через `INTERVAL_MS`, а затем через `DOWNLOAD_SEC` / `UPLOAD_SEC` / `CONCURRENCY`.
 
 ## Логи: если нода не появилась в консоли
 

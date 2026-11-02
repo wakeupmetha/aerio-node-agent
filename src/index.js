@@ -10,6 +10,7 @@ import { logger, logConfig } from './log.js';
 import { VERSION } from './version.js';
 import { createAgent } from './server.js';
 import { HistoryStore, defaultDataFile } from './storage.js';
+import { GeocheckOutbox } from './outbox.js';
 import { Scheduler } from './scheduler.js';
 import { runSpeedtest } from './speedtest.js';
 import { DEFAULT_ARGS, SCHEMA, loadDigest, resolveGeocheckBin, runGeocheck, saveDigest } from './geocheck.js';
@@ -38,7 +39,7 @@ const heartbeatMs = Math.round(Math.min(3_600_000, Math.max(5_000, num('HEARTBEA
 const port = num('PORT', 9101);
 const bind = env('BIND', '127.0.0.1');
 
-const intervalMs = num('INTERVAL_MS', 30 * 60 * 1000);
+const intervalMs = num('INTERVAL_MS', 0);
 const jitterPct = num('JITTER_PCT', 0.15);
 const firstDelayMs = num('FIRST_DELAY_MS', 5_000);
 // A run is ~15 s with the defaults below; anything past this is a hang, not a
@@ -88,6 +89,9 @@ if (panelUrl && !/^https?:\/\//.test(panelUrl)) {
 // ── state ───────────────────────────────────────────────────────────────────
 const store = new HistoryStore({ file: dataFile, maxEntries });
 await store.init();
+// Pending snapshots survive container restarts on the same data volume.
+const outbox = panelUrl ? new GeocheckOutbox(join(dirname(dataFile), 'geocheck-outbox.json')) : null;
+await outbox?.init();
 
 // Self-identify by public IP + location. Best-effort, once per process.
 const node = await fetchGeo();
@@ -169,8 +173,12 @@ if (geocheckBin) {
       return runGeocheck({ bin: geocheckBin, args: geocheckArgs });
     },
     onDone: async (d, { n, elapsedMs }) => {
+      // Queue first: never publish a newer digest without retaining the
+      // preceding observations when the gateway is unreachable.
+      await outbox?.enqueue(d);
       geocheckDigest = d;
       await saveDigest(geocheckFile, d);
+      if (outbox && outbox.size % 100 === 0) gcLog.warn('geocheck delivery backlog', { pending: outbox.size });
       gcLog.info(`run #${n} done`, { ...d.summary, country: d.country?.code, reputation: d.reputation?.type, elapsed: `${(elapsedMs / 1000).toFixed(1)}s` });
       const blocked = d.services.filter((s) => s.state === 'blocked').map((s) => s.name);
       const restricted = d.services.filter((s) => s.state === 'restricted').map((s) => s.name);
@@ -215,7 +223,10 @@ if (panelUrl) {
         latencyMs: r.latency?.median ?? null,
       })),
       geocheck: geocheckDigest,
+      delivery: outbox?.peek() ?? null,
     }),
+    onDeliveryAck: (id) => outbox?.acknowledge(id),
+    pendingDeliveries: () => outbox?.size ?? 0,
     onCommand: (cmd) => {
       if (cmd === 'speedtest') return speedtest.runOnce();
       if (cmd === 'geocheck') {
@@ -275,6 +286,7 @@ const shutdown = async (sig) => {
   speedtest.stop();
   geocheck?.scheduler.stop();
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  panel?.stop();
   try { await agent.close(); } catch { /* ignore */ }
   process.exit(0);
 };

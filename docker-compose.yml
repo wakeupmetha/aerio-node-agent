@@ -30,8 +30,8 @@ services:
       PANEL_URL: ${PANEL_URL:-}
       # The secret the panel minted for THIS node. Required.
       TOKEN: ${TOKEN}
-      # Speedtest cadence (30 min) and its ±jitter.
-      INTERVAL_MS: ${INTERVAL_MS:-1800000}
+      # Active speedtests are disabled by default; opt in with a positive interval.
+      INTERVAL_MS: ${INTERVAL_MS:-0}
       JITTER_PCT: ${JITTER_PCT:-0.15}
       # Service-availability checks via geocheck (6 h; 0 disables).
       GEOCHECK_INTERVAL_MS: ${GEOCHECK_INTERVAL_MS:-21600000}
