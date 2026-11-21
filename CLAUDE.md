@@ -37,7 +37,7 @@ The same protocol applies in `aerio-crm`; the heartbeat contract is documented o
 | Property | Value |
 |---|---|
 | Purpose | Per-node agent: Cloudflare speedtest on a schedule + service-availability checks via `remnawave/geocheck`, reported to the aerio panel over an **outbound** heartbeat. Beszel-style install: the panel mints a token and shows the `docker run` line. |
-| Language | Node.js ≥ 20, ES modules, **no third-party dependencies** (`node:*` only) |
+| Language | Node.js ≥ 22, ES modules, **no third-party dependencies** (`node:*` only) |
 | Source | ~1 650 LOC in [src/](src/), 15 modules; tests in [test/](test/) (`node --test`, no framework) |
 | Image | `ghcr.io/wakeupmetha/cloudflare-speedtest-node:latest` (multi-arch, built by [.github/workflows/docker.yml](.github/workflows/docker.yml)); bundles the `geocheck` binary copied from `remnawave/geocheck` |
 | Install | Two commands, both printed by the panel with the token in them: `docker run …`, or [install.sh](install.sh) for a systemd unit under `/opt/aerio-agent`. Both need this repo **public** (§11). |
@@ -244,7 +244,7 @@ run and the heartbeat is ~1 KB every 30 s — neither is worth tuning.
 
 ## 8. Build & deploy
 
-- [Dockerfile](Dockerfile): `FROM ${GEOCHECK_IMAGE:-remnawave/geocheck:latest} AS geocheck` → `node:20-alpine`, copies `/usr/local/bin/geocheck`, `USER node`, `BIND=127.0.0.1`, no `npm install` layer (zero deps). Healthcheck `wget /health` every 30 s.
+- [Dockerfile](Dockerfile): `FROM ${GEOCHECK_IMAGE:-remnawave/geocheck:latest} AS geocheck` → `node:22-alpine` (moved off `node:20-alpine` on 2026-11-21: Node 20 reached end of life on 2026-04-30; `engines`, CI and `install.sh` moved to ≥ 22 with it), copies `/usr/local/bin/geocheck`, `USER node`, `BIND=127.0.0.1`, no `npm install` layer (zero deps). Healthcheck `wget /health` every 30 s.
 - [docker-compose.yml](docker-compose.yml): one service `agent` (container `aerio-agent`), image from GHCR with `build: .` for local builds, `env_file: .env` (so every knob in `.env.example` reaches the container; the `environment:` block only carries defaults), **no `ports:`**, named volume `agent-data:/data`.
 ### `install.sh` — the no-Docker path
 
@@ -259,7 +259,7 @@ curl -sL https://raw.githubusercontent.com/wakeupmetha/cloudflare-speedtest-node
 
 What it does, in order: validate the token/URL, refuse anything that is not
 Linux+systemd or not root, pick the arch, **reuse the host's node when it is
-≥ 20** and otherwise download the pinned official tarball into
+≥ 22** and otherwise download the pinned official tarball (22.23.5) into
 `$PREFIX/node` (checksum-verified against `SHASUMS256.txt`), fetch the agent
 source from the repo archive, fetch `geocheck` from its own releases
 (checksum-verified against `checksums.txt`), create the `aerio-agent` system

@@ -5,8 +5,8 @@
 [![docker.yml](https://github.com/wakeupmetha/aerio-node-agent/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/wakeupmetha/aerio-node-agent/actions/workflows/docker.yml)
 
 ![aerio--agent](https://img.shields.io/badge/aerio--agent-0.3.0-555555)
-![Node.js](https://img.shields.io/badge/Node.js-20-5FA04E?logo=nodedotjs&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-node:20--alpine-2496ED?logo=docker&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-22-5FA04E?logo=nodedotjs&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-node:22--alpine-2496ED?logo=docker&logoColor=white)
 ![Platforms](https://img.shields.io/badge/platforms-amd64_%7C_arm64-2496ED?logo=linux&logoColor=white)
 ![geocheck](https://img.shields.io/badge/remnawave%2Fgeocheck-latest-00ADD8?logo=go&logoColor=white)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
@@ -16,7 +16,7 @@
 - Speedtest по расписанию (по умолчанию отключён; включается через `INTERVAL_MS`): задержка в покое и под нагрузкой, пропускная способность, оценки bufferbloat и стабильности — как в [cloudflare-speed-cli](https://github.com/kavehtehrani/cloudflare-speed-cli).
 - Проверка сервисов через [remnawave/geocheck](https://github.com/remnawave/geocheck) (раз в 6 ч): какие сервисы пускают IP ноды.
 - Раз в 30 с шлёт `POST ${PANEL_URL}/api/agent/heartbeat` с `Authorization: Bearer <TOKEN>` и забирает команды «Run now». Порт открывать не нужно, агент только подключается наружу.
-- Node.js ≥ 20, ноль сторонних зависимостей, один Docker-образ с geocheck внутри, один volume.
+- Node.js ≥ 22, ноль сторонних зависимостей, один Docker-образ с geocheck внутри, один volume.
 - Полный справочник — [CLAUDE.md](CLAUDE.md): §4 «Wire contract» (хартбит и локальный API), §5 «Schedulers», §7 «Environment variables», §8 «Build & deploy», §9 «Logs».
 
 ## Запуск на новом сервере
@@ -46,7 +46,7 @@
    docker compose up -d
    ```
 
-   **systemd, без Docker.** Скрипт ставит агента в `/opt/aerio-agent` под отдельным пользователем. Если на хосте нет Node ≥ 20, скрипт скачает её сам. Токен кладётся в `/etc/aerio-agent.env` с правами `0600`:
+   **systemd, без Docker.** Скрипт ставит агента в `/opt/aerio-agent` под отдельным пользователем. Если на хосте нет Node ≥ 22, скрипт скачает её сам. Токен кладётся в `/etc/aerio-agent.env` с правами `0600`:
 
    ```bash
    curl -sL https://raw.githubusercontent.com/wakeupmetha/cloudflare-speedtest-node/main/install.sh -o /tmp/aerio-agent-install.sh \

@@ -19,7 +19,7 @@
 ARG GEOCHECK_IMAGE=remnawave/geocheck:latest
 FROM ${GEOCHECK_IMAGE} AS geocheck
 
-FROM node:20-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 

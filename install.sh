@@ -12,16 +12,16 @@
 # open, no address to register anywhere. Re-run the same line to upgrade or to
 # rotate the token — it replaces the app and restarts the unit, keeping data.
 #
-# Node is not a prerequisite. If the host has no node >= 20 the script fetches
+# Node is not a prerequisite. If the host has no node >= 22 the script fetches
 # the official tarball into the install prefix and leaves the system node
 # alone. geocheck is fetched from its own releases, exactly as the Docker
 # image bundles it. Both downloads are checksum-verified.
 
 set -euo pipefail
 
-# Bump to move the bundled runtime. Any Node >= 20 works; this one is only
+# Bump to move the bundled runtime. Any Node >= 22 works; this one is only
 # used when the host has nothing suitable.
-NODE_VERSION="${NODE_VERSION:-22.11.0}"
+NODE_VERSION="${NODE_VERSION:-22.23.5}"
 
 REPO="${AERIO_AGENT_REPO:-wakeupmetha/cloudflare-speedtest-node}"
 REF="${AERIO_AGENT_REF:-main}"
@@ -158,7 +158,7 @@ node_ok() {
   command -v node >/dev/null 2>&1 || return 1
   local major
   major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-  [ "$major" -ge 20 ] 2>/dev/null
+  [ "$major" -ge 22 ] 2>/dev/null
 }
 
 install_node() {
