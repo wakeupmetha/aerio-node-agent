@@ -5,7 +5,7 @@
   "description": "Per-node Cloudflare speedtest + geocheck agent that pairs with the aerio panel",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "main": "src/index.js",
   "scripts": {
